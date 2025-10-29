@@ -1,0 +1,54 @@
+# PowerShell output files
+*.log
+*.txt
+*.json
+*.csv
+
+# Analysis output folders - DO NOT COMMIT
+AppAnalysis_*/
+AppDetails_*/
+DataverseAppDetails_*/
+UnifiedInterfaceApps_*/
+App_*/
+
+# Keep folder structure but ignore content
+AppAnalysis_*/**
+!AppAnalysis_*/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+
+# PowerShell cache
+*.psm1.cache
+*.psd1.cache
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Cleanup script (temporary)
+Cleanup.ps1
