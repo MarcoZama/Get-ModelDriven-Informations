@@ -387,8 +387,17 @@ try {
         $reportText += "  USAGE INFORMATION:`n"
         if ($appData.LastUsed) {
             $reportText += "    Last Activity: $($appData.LastUsed)`n"
-            $daysSinceUse = ((Get-Date) - [DateTime]$appData.LastUsed).Days
-            $reportText += "    Days Since Last Activity: $daysSinceUse days`n"
+            try {
+                $lastUsedDate = if ($appData.LastUsed -is [DateTime]) {
+                    $appData.LastUsed
+                } else {
+                    [DateTime]::Parse($appData.LastUsed, [System.Globalization.CultureInfo]::InvariantCulture)
+                }
+                $daysSinceUse = ((Get-Date) - $lastUsedDate).Days
+                $reportText += "    Days Since Last Activity: $daysSinceUse days`n"
+            } catch {
+                Write-Warning "Unable to parse date: $($appData.LastUsed)"
+            }
             if ($appData.UsageCount -gt 0) {
                 $reportText += "    Audit Records Found: $($appData.UsageCount)`n"
             }
@@ -503,11 +512,35 @@ try {
     
     $usageText += "Apps sorted by last activity (most recent first):`n`n"
     
-    foreach ($app in ($analysisResults | Sort-Object { if($_.LastUsed){[DateTime]$_.LastUsed}else{[DateTime]::MinValue} } -Descending)) {
+    foreach ($app in ($analysisResults | Sort-Object { 
+        if($_.LastUsed) {
+            try {
+                if ($_.LastUsed -is [DateTime]) {
+                    $_.LastUsed
+                } else {
+                    [DateTime]::Parse($_.LastUsed, [System.Globalization.CultureInfo]::InvariantCulture)
+                }
+            } catch {
+                [DateTime]::MinValue
+            }
+        } else {
+            [DateTime]::MinValue
+        } 
+    } -Descending)) {
         if ($app.LastUsed) {
-            $daysSince = ((Get-Date) - [DateTime]$app.LastUsed).Days
-            $usageText += "- $($app.AppName)`n"
-            $usageText += "  Last Activity: $($app.LastUsed) ($daysSince days ago)`n"
+            try {
+                $lastUsedDate = if ($app.LastUsed -is [DateTime]) {
+                    $app.LastUsed
+                } else {
+                    [DateTime]::Parse($app.LastUsed, [System.Globalization.CultureInfo]::InvariantCulture)
+                }
+                $daysSince = ((Get-Date) - $lastUsedDate).Days
+                $usageText += "- $($app.AppName)`n"
+                $usageText += "  Last Activity: $($app.LastUsed) ($daysSince days ago)`n"
+            } catch {
+                $usageText += "- $($app.AppName)`n"
+                $usageText += "  Last Activity: $($app.LastUsed) (unable to calculate days)`n"
+            }
         } else {
             $usageText += "- $($app.AppName)`n"
             $usageText += "  Last Activity: Unknown`n"
@@ -533,7 +566,20 @@ try {
             UsersList = ($app.SharedWithUsers -join "; ")
             TeamsList = ($app.SharedWithTeams -join "; ")
             LastUsed = $app.LastUsed
-            DaysSinceLastUse = if($app.LastUsed){((Get-Date) - [DateTime]$app.LastUsed).Days}else{"Unknown"}
+            DaysSinceLastUse = if($app.LastUsed){
+                try {
+                    $lastUsedDate = if ($app.LastUsed -is [DateTime]) {
+                        $app.LastUsed
+                    } else {
+                        [DateTime]::Parse($app.LastUsed, [System.Globalization.CultureInfo]::InvariantCulture)
+                    }
+                    ((Get-Date) - $lastUsedDate).Days
+                } catch {
+                    "Error parsing date"
+                }
+            } else {
+                "Unknown"
+            }
             CreatedOn = $app.CreatedOn
             CreatedBy = $app.CreatedBy
             ModifiedOn = $app.ModifiedOn
