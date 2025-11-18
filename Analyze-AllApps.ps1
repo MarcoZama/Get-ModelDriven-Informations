@@ -5,7 +5,16 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$EnvironmentName = $null
+    [string]$EnvironmentName = $null,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$EnvironmentUrl = $null,
+    
+    [Parameter(Mandatory=$false)]
+    [switch]$UseServicePrincipal,
+    
+    [Parameter(Mandatory=$false)]
+    [string]$CredentialFile = "sp-credentials.xml"
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -22,7 +31,14 @@ Import-Module Microsoft.Xrm.Data.PowerShell
 
 try {
     # Connect to Power Platform
-    if ([string]::IsNullOrEmpty($EnvironmentName)) {
+    if (![string]::IsNullOrEmpty($EnvironmentUrl)) {
+        Write-Host "`nUsing direct environment URL: $EnvironmentUrl..." -ForegroundColor Cyan
+        $envUrl = $EnvironmentUrl
+        $targetEnv = [PSCustomObject]@{
+            DisplayName = "Direct URL Connection"
+            EnvironmentName = "N/A"
+        }
+    } elseif ([string]::IsNullOrEmpty($EnvironmentName)) {
         Write-Host "`nConnecting to default environment..." -ForegroundColor Cyan
     } else {
         Write-Host "`nConnecting to environment: $EnvironmentName..." -ForegroundColor Cyan
@@ -33,10 +49,37 @@ try {
     }
     Import-Module Microsoft.PowerApps.Administration.PowerShell
     
-    Add-PowerAppsAccount
+    # Authentication
+    if ($UseServicePrincipal) {
+        Write-Host "Using Service Principal authentication..." -ForegroundColor Cyan
+        
+        if (!(Test-Path $CredentialFile)) {
+            Write-Host "ERROR: Credential file not found: $CredentialFile" -ForegroundColor Red
+            Write-Host "Please run setup first:" -ForegroundColor Yellow
+            Write-Host "  .\Analyze-AllApps-ServicePrincipal-Secure.ps1 -SetupCredentials" -ForegroundColor Gray
+            exit 1
+        }
+        
+        $credFile = Import-Clixml -Path $CredentialFile
+        $appId = $credFile.ApplicationId
+        $tenantId = $credFile.TenantId
+        $secret = $credFile.ClientSecret
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+        $secretPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        
+        Write-Host "Application ID: $appId" -ForegroundColor Gray
+        
+        Add-PowerAppsAccount -ApplicationId $appId -ClientSecret $secretPlain -TenantID $tenantId
+        
+        # Clean up secret from memory
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+    } else {
+        Write-Host "Using interactive authentication..." -ForegroundColor Cyan
+        Add-PowerAppsAccount
+    }
     
-    # Get target environment
-    if ([string]::IsNullOrEmpty($EnvironmentName)) {
+    # Get target environment (skip if direct URL provided)
+    if ([string]::IsNullOrEmpty($EnvironmentUrl)) {
         # Get default environment
         $targetEnv = Get-AdminPowerAppEnvironment | Where-Object { $_.IsDefault -eq $true } | Select-Object -First 1
         
@@ -57,19 +100,59 @@ try {
         }
     }
     
-    if (!$targetEnv) {
-        Write-Host "ERROR: Environment not found!" -ForegroundColor Red
-        exit 1
+    if ([string]::IsNullOrEmpty($envUrl)) {
+        if (!$targetEnv) {
+            Write-Host "ERROR: Environment not found!" -ForegroundColor Red
+            exit 1
+        }
+        
+        $envUrl = $targetEnv.Internal.properties.linkedEnvironmentMetadata.instanceUrl
     }
-    
-    $envUrl = $targetEnv.Internal.properties.linkedEnvironmentMetadata.instanceUrl
     
     Write-Host "Environment: $($targetEnv.DisplayName)" -ForegroundColor Green
     Write-Host "URL: $envUrl`n" -ForegroundColor Gray
     
     # Connect to Dataverse
     Write-Host "Connecting to Dataverse..." -ForegroundColor Cyan
-    $conn = Connect-CrmOnline -ServerUrl $envUrl -ForceOAuth
+    
+    if ($UseServicePrincipal) {
+        # Reload credentials for Dataverse connection
+        $credFile = Import-Clixml -Path $CredentialFile
+        $appId = $credFile.ApplicationId
+        $secret = $credFile.ClientSecret
+        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+        $secretPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
+        
+        try {
+            $conn = Connect-CrmOnline -ServerUrl $envUrl -OAuthClientId $appId -ClientSecret $secretPlain -Verbose
+        } catch {
+            Write-Host "ERROR: Failed to connect to Dataverse with Service Principal" -ForegroundColor Red
+            Write-Host "Error details: $_" -ForegroundColor Red
+            if ($_.Exception.InnerException) {
+                Write-Host "Inner Exception: $($_.Exception.InnerException.Message)" -ForegroundColor Yellow
+            }
+            Write-Host ""
+            Write-Host "
+Possible causes:" -ForegroundColor Yellow
+            Write-Host "1. Application user not created in this environment" -ForegroundColor Gray
+            Write-Host "2. Application user exists but has no security role assigned" -ForegroundColor Gray
+            Write-Host "3. Service Principal lacks required permissions" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "To fix:" -ForegroundColor Yellow
+            Write-Host "1. Go to Power Platform Admin Center" -ForegroundColor Gray
+            Write-Host "2. Select the environment 'Contoso - Sviluppo'" -ForegroundColor Gray
+            Write-Host "3. Go to Settings > Users + permissions > Application users" -ForegroundColor Gray
+            Write-Host "4. Find application user with ID: $appId" -ForegroundColor Gray
+            Write-Host "5. Assign 'System Administrator' role" -ForegroundColor Gray
+            exit 1
+        }
+        
+        # Clean up
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+        $secretPlain = $null
+    } else {
+        $conn = Connect-CrmOnline -ServerUrl $envUrl -ForceOAuth
+    }
     
     if (!$conn -or !$conn.IsReady) {
         Write-Host "ERROR: Failed to connect to Dataverse" -ForegroundColor Red

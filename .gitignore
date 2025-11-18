@@ -4,12 +4,17 @@
 *.json
 *.csv
 
+# Credentials - NEVER COMMIT!
+sp-credentials.xml
+.env
+
 # Analysis output folders - DO NOT COMMIT
 AppAnalysis_*/
 AppDetails_*/
 DataverseAppDetails_*/
 UnifiedInterfaceApps_*/
 App_*/
+ConsolidatedReport_*/
 
 # Keep folder structure but ignore content
 AppAnalysis_*/**
