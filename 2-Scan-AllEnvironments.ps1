@@ -124,6 +124,7 @@ foreach ($env in $environments) {
         $fetchXml += '<attribute name="createdon" />'
         $fetchXml += '<attribute name="modifiedon" />'
         $fetchXml += '<attribute name="publishedon" />'
+        $fetchXml += '<attribute name="statecode" />'
         $fetchXml += '<filter type="and">'
         $fetchXml += '<condition attribute="clienttype" operator="eq" value="4" />'
         $fetchXml += '</filter>'
@@ -192,6 +193,129 @@ foreach ($env in $environments) {
                 $roleCount = 0
             }
             
+            # Get users with access to this app (through roles)
+            $usersList = @()
+            $teamsList = @()
+            $totalUsers = 0
+            $totalTeams = 0
+            
+            if ($roleCount -gt 0) {
+                try {
+                    # Get users assigned to these roles
+                    $usersFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
+                    $usersFetch += '<entity name="systemuser">'
+                    $usersFetch += '<attribute name="fullname" />'
+                    $usersFetch += '<attribute name="systemuserid" />'
+                    $usersFetch += '<link-entity name="systemuserroles" from="systemuserid" to="systemuserid">'
+                    $usersFetch += '<link-entity name="role" from="roleid" to="roleid">'
+                    $usersFetch += '<link-entity name="appmoduleroles" from="roleid" to="roleid">'
+                    $usersFetch += '<filter>'
+                    $usersFetch += "<condition attribute=`"appmoduleid`" operator=`"eq`" value=`"{$appGuid}`" />"
+                    $usersFetch += '</filter>'
+                    $usersFetch += '</link-entity>'
+                    $usersFetch += '</link-entity>'
+                    $usersFetch += '</link-entity>'
+                    $usersFetch += '<filter>'
+                    $usersFetch += '<condition attribute="isdisabled" operator="eq" value="0" />'
+                    $usersFetch += '</filter>'
+                    $usersFetch += '</entity>'
+                    $usersFetch += '</fetch>'
+                    
+                    $users = Get-CrmRecordsByFetch -conn $conn -Fetch $usersFetch -ErrorAction SilentlyContinue
+                    
+                    if ($users -is [System.Collections.IDictionary]) {
+                        foreach ($key in $users.Keys) {
+                            if ($users[$key].fullname) {
+                                $usersList += $users[$key]
+                            }
+                        }
+                    }
+                    $totalUsers = $usersList.Count
+                } catch {
+                    $totalUsers = 0
+                }
+                
+                try {
+                    # Get teams assigned to these roles
+                    $teamsFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
+                    $teamsFetch += '<entity name="team">'
+                    $teamsFetch += '<attribute name="name" />'
+                    $teamsFetch += '<attribute name="teamid" />'
+                    $teamsFetch += '<link-entity name="teamroles" from="teamid" to="teamid">'
+                    $teamsFetch += '<link-entity name="role" from="roleid" to="roleid">'
+                    $teamsFetch += '<link-entity name="appmoduleroles" from="roleid" to="roleid">'
+                    $teamsFetch += '<filter>'
+                    $teamsFetch += "<condition attribute=`"appmoduleid`" operator=`"eq`" value=`"{$appGuid}`" />"
+                    $teamsFetch += '</filter>'
+                    $teamsFetch += '</link-entity>'
+                    $teamsFetch += '</link-entity>'
+                    $teamsFetch += '</link-entity>'
+                    $teamsFetch += '</entity>'
+                    $teamsFetch += '</fetch>'
+                    
+                    $teams = Get-CrmRecordsByFetch -conn $conn -Fetch $teamsFetch -ErrorAction SilentlyContinue
+                    
+                    if ($teams -is [System.Collections.IDictionary]) {
+                        foreach ($key in $teams.Keys) {
+                            if ($teams[$key].name) {
+                                $teamsList += $teams[$key]
+                            }
+                        }
+                    }
+                    $totalTeams = $teamsList.Count
+                } catch {
+                    $totalTeams = 0
+                }
+            }
+            
+            # Get last usage information from audit logs
+            $lastUsed = $null
+            $daysSinceLastUse = $null
+            
+            try {
+                $auditFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" top="1">'
+                $auditFetch += '<entity name="audit">'
+                $auditFetch += '<attribute name="createdon" />'
+                $auditFetch += '<filter>'
+                $auditFetch += "<condition attribute=`"objectid`" operator=`"eq`" value=`"{$appGuid}`" />"
+                $auditFetch += '<condition attribute="operation" operator="eq" value="64" />'  # Access operation
+                $auditFetch += '</filter>'
+                $auditFetch += '<order attribute="createdon" descending="true" />'
+                $auditFetch += '</entity>'
+                $auditFetch += '</fetch>'
+                
+                $auditRecords = Get-CrmRecordsByFetch -conn $conn -Fetch $auditFetch -ErrorAction SilentlyContinue
+                
+                if ($auditRecords -is [System.Collections.IDictionary]) {
+                    $auditList = @()
+                    foreach ($key in $auditRecords.Keys) {
+                        if ($auditRecords[$key].createdon) {
+                            $auditList += $auditRecords[$key]
+                        }
+                    }
+                    if ($auditList.Count -gt 0) {
+                        $lastUsed = $auditList[0].createdon
+                        $daysSinceLastUse = [math]::Round((New-TimeSpan -Start $lastUsed -End (Get-Date)).TotalDays)
+                    }
+                }
+            } catch {
+                # Audit may not be enabled or accessible
+                $lastUsed = $null
+                $daysSinceLastUse = $null
+            }
+            
+            # Determine state
+            $appState = switch ($app.statecode) {
+                "0" { "Active" }
+                "1" { "Inactive" }
+                default { "Unknown" }
+            }
+            
+            # Format user and team lists
+            $usersListStr = if ($usersList.Count -gt 0) { ($usersList | ForEach-Object { $_.fullname }) -join "; " } else { "" }
+            $teamsListStr = if ($teamsList.Count -gt 0) { ($teamsList | ForEach-Object { $_.name }) -join "; " } else { "" }
+            $sharedWithRoles = $roleNames
+            
             $isShared = "No"
             $isOrphaned = "Yes"
             
@@ -212,11 +336,19 @@ foreach ($env in $environments) {
                 UniqueName = $app.uniquename
                 AppId = $app.appmoduleid
                 Description = $app.description
+                State = $appState
                 CreatedOn = $app.createdon
                 ModifiedOn = $app.modifiedon
                 PublishedOn = $app.publishedon
                 RoleCount = $roleCount
-                Roles = $roleNames
+                SharedWithRoles = $sharedWithRoles
+                SharedCount = $roleCount
+                TotalUsers = $totalUsers
+                TotalTeams = $totalTeams
+                UsersList = $usersListStr
+                TeamsList = $teamsListStr
+                LastUsed = $lastUsed
+                DaysSinceLastUse = $daysSinceLastUse
                 IsShared = $isShared
                 IsOrphaned = $isOrphaned
             }

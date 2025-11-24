@@ -160,6 +160,18 @@ Single environment analyzer (supports both interactive and Service Principal mod
 
 ## Troubleshooting
 
+### HttpRequestException - Browser non si apre
+
+Se il browser non si apre durante `pac auth create`, usa il **device code flow**:
+
+```powershell
+pac auth create --deviceCode
+```
+
+Questo mostra un codice da inserire manualmente in un browser (anche su altro dispositivo).
+
+**Vedi [TROUBLESHOOTING.md](TROUBLESHOOTING.md) per soluzioni dettagliate.**
+
 ### "Connection Failed" for an environment
 - The application user must exist in the environment
 - The application user must have **System Administrator** role
