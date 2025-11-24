@@ -306,8 +306,10 @@ foreach ($env in $environments) {
             
             # Determine state
             $appState = switch ($app.statecode) {
-                "0" { "Active" }
-                "1" { "Inactive" }
+                "Active" { "Active" }
+                "Inactive" { "Inactive" }
+                0 { "Active" }
+                1 { "Inactive" }
                 default { "Unknown" }
             }
             
