@@ -24,7 +24,7 @@ This script will:
 - List all Power Platform environments
 - Deploy application user with System Administrator role to each environment
 
-### 2. Scan All Environments
+### 2. Scan All Environments (CSV Reports)
 
 ```powershell
 .\2-Scan-AllEnvironments.ps1
@@ -34,13 +34,27 @@ This script will:
 - Load Service Principal credentials
 - Connect to each environment automatically
 - Scan all Model-Driven Apps
-- Generate consolidated reports in timestamped folder
+- Generate consolidated CSV reports in timestamped folder
+
+### 3. Generate Complete Analysis Report (JSON)
+
+```powershell
+.\3-Generate-CompleteAnalysis.ps1
+```
+
+This script will:
+- Load Service Principal credentials
+- Connect to each environment automatically
+- Generate comprehensive JSON report with detailed user/team role assignments
+- Include audit logs for last app usage tracking
 
 ## Output Files
 
-All reports are saved in: `ConsolidatedReport_YYYYMMDD_HHMMSS/`
+### CSV Reports (from `2-Scan-AllEnvironments.ps1`)
 
-### Main Report: `AllEnvironments_Apps.csv`
+All CSV reports are saved in: `ConsolidatedReport_YYYYMMDD_HHMMSS/`
+
+#### Main Report: `AllEnvironments_Apps.csv`
 
 Excel-friendly CSV with complete app inventory across all environments.
 
@@ -52,19 +66,63 @@ Excel-friendly CSV with complete app inventory across all environments.
 - `UniqueName` - Unique identifier
 - `AppId` - App module GUID
 - `Description` - App description
+- `State` - App state (Published/Unpublished)
 - `CreatedOn` - Creation timestamp
 - `ModifiedOn` - Last modified timestamp
 - `PublishedOn` - Last published timestamp
-- `RoleCount` - Number of assigned security roles
-- `Roles` - Security role names (semicolon-separated)
-- `IsShared` - "Yes" if shared with roles
-- `IsOrphaned` - "Yes" if not shared with any role
+- `SharedWithRoles` - Security role names (semicolon-separated)
+- `SharedCount` - Number of security roles sharing this app
+- `TotalUsers` - Total number of users with access (via roles)
+- `TotalTeams` - Total number of teams with access (via roles)
+- `UsersList` - List of user names (semicolon-separated)
+- `TeamsList` - List of team names (semicolon-separated)
+- `LastUsed` - Last access date from audit logs
+- `DaysSinceLastUse` - Days since last app usage
 
-### Additional Reports
+#### Additional CSV Reports
 
 - `EnvironmentSummary.csv` - Statistics per environment (app count, shared/orphaned apps)
 - `DetailedReport.txt` - Human-readable text report
 - `CompleteData.json` - Full data in JSON format
+
+### Complete Analysis JSON Report (from `3-Generate-CompleteAnalysis.ps1`)
+
+Comprehensive JSON report saved in: `CompleteAnalysis_YYYYMMDD_HHMMSS/CompleteAnalysis.json`
+
+This report provides a detailed breakdown of each app with:
+
+**Structure per App:**
+```json
+{
+  "Name": "App Name",
+  "UniqueName": "unique_name",
+  "AppModuleId": "guid",
+  "EnvironmentURL": "https://org.crm.dynamics.com/",
+  "Description": "App description",
+  "State": "Published/Unpublished",
+  "CreatedOn": "2024-01-01T00:00:00Z",
+  "ModifiedOn": "2024-01-15T00:00:00Z",
+  "PublishedOn": "2024-01-15T00:00:00Z",
+  "SharedWith": ["Role1", "Role2"],
+  "UsersByRole": {
+    "System Administrator": ["User1", "# AppUser1", "User2"],
+    "Custom Role": ["User3", "User4"]
+  },
+  "TeamsByRole": {
+    "System Administrator": ["Team1", "Team2"],
+    "Custom Role": ["Team3"]
+  },
+  "LastUsedDate": "2024-11-20T10:30:00Z",
+  "DaysSinceLastUse": 5
+}
+```
+
+**Key Features:**
+- **UsersByRole**: Lists all users per security role (application users marked with `#`)
+- **TeamsByRole**: Lists all teams per security role
+- **SharedWith**: Array of role names that have access to the app
+- **LastUsedDate**: From audit logs (app open events)
+- **DaysSinceLastUse**: Calculated from audit data
 
 ## Prerequisites
 
@@ -131,31 +189,33 @@ Single environment analyzer (supports both interactive and Service Principal mod
 ## Workflow
 
 ```
-┌─────────────────────────┐
-│   1-Setup.ps1           │
-│   - Auth interactively  │
-│   - Save SP credentials │
-│   - Deploy app users    │
-└───────────┬─────────────┘
-            │ Creates sp-credentials.xml
-            ↓
-┌─────────────────────────┐
-│ 2-Scan-AllEnvironments  │
-│ .ps1                    │
-│   - Load SP credentials │
-│   - Scan all envs       │
-│   - Generate reports    │
-└───────────┬─────────────┘
-            │
-            ↓
-┌─────────────────────────┐
-│ ConsolidatedReport_*/   │
-│   - AllEnvironments_    │
-│     Apps.csv            │
-│   - EnvironmentSummary  │
-│     .csv                │
-│   - JSON & TXT reports  │
-└─────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       1-Setup.ps1                           │
+│                  - Auth interactively                       │
+│                  - Save SP credentials                      │
+│                  - Deploy app users                         │
+└────────────────────────┬────────────────────────────────────┘
+                         │ Creates sp-credentials.xml
+        ┌────────────────┴────────────────┐
+        ↓                                 ↓
+┌──────────────────────┐      ┌──────────────────────────────┐
+│ 2-Scan-AllEnviron-   │      │ 3-Generate-CompleteAnalysis  │
+│ ments.ps1            │      │ .ps1                         │
+│  - Load SP creds     │      │  - Load SP credentials       │
+│  - Scan all envs     │      │  - Scan all environments     │
+│  - Generate CSV      │      │  - Query users/teams/audit   │
+│    reports           │      │  - Generate JSON report      │
+└────────┬─────────────┘      └──────────┬───────────────────┘
+         ↓                               ↓
+┌──────────────────────┐      ┌──────────────────────────────┐
+│ ConsolidatedReport_  │      │ CompleteAnalysis_            │
+│ YYYYMMDD_HHMMSS/     │      │ YYYYMMDD_HHMMSS/             │
+│  - AllEnvironments_  │      │  - CompleteAnalysis.json     │
+│    Apps.csv          │      │    (with UsersByRole,        │
+│  - EnvironmentSumm-  │      │     TeamsByRole, audit       │
+│    ary.csv           │      │     logs)                    │
+│  - JSON & TXT        │      │                              │
+└──────────────────────┘      └──────────────────────────────┘
 ```
 
 ## Troubleshooting

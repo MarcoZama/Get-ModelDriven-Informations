@@ -125,6 +125,12 @@ foreach ($env in $environments) {
         $fetchXml += '<attribute name="modifiedon" />'
         $fetchXml += '<attribute name="publishedon" />'
         $fetchXml += '<attribute name="statecode" />'
+        $fetchXml += '<link-entity name="systemuser" from="systemuserid" to="createdby" alias="creator">'
+        $fetchXml += '<attribute name="fullname" />'
+        $fetchXml += '</link-entity>'
+        $fetchXml += '<link-entity name="systemuser" from="systemuserid" to="modifiedby" alias="modifier">'
+        $fetchXml += '<attribute name="fullname" />'
+        $fetchXml += '</link-entity>'
         $fetchXml += '<filter type="and">'
         $fetchXml += '<condition attribute="clienttype" operator="eq" value="4" />'
         $fetchXml += '</filter>'
@@ -198,74 +204,97 @@ foreach ($env in $environments) {
             $teamsList = @()
             $totalUsers = 0
             $totalTeams = 0
+            $usersByRole = @{}
+            $teamsByRole = @{}
             
             if ($roleCount -gt 0) {
-                try {
-                    # Get users assigned to these roles
-                    $usersFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
-                    $usersFetch += '<entity name="systemuser">'
-                    $usersFetch += '<attribute name="fullname" />'
-                    $usersFetch += '<attribute name="systemuserid" />'
-                    $usersFetch += '<link-entity name="systemuserroles" from="systemuserid" to="systemuserid">'
-                    $usersFetch += '<link-entity name="role" from="roleid" to="roleid">'
-                    $usersFetch += '<link-entity name="appmoduleroles" from="roleid" to="roleid">'
-                    $usersFetch += '<filter>'
-                    $usersFetch += "<condition attribute=`"appmoduleid`" operator=`"eq`" value=`"{$appGuid}`" />"
-                    $usersFetch += '</filter>'
-                    $usersFetch += '</link-entity>'
-                    $usersFetch += '</link-entity>'
-                    $usersFetch += '</link-entity>'
-                    $usersFetch += '<filter>'
-                    $usersFetch += '<condition attribute="isdisabled" operator="eq" value="0" />'
-                    $usersFetch += '</filter>'
-                    $usersFetch += '</entity>'
-                    $usersFetch += '</fetch>'
+                # Process each role to get users and teams
+                foreach ($role in $rolesList) {
+                    $roleName = $role.name
+                    $roleId = $role.roleid
                     
-                    $users = Get-CrmRecordsByFetch -conn $conn -Fetch $usersFetch -ErrorAction SilentlyContinue
+                    # Initialize arrays for this role
+                    if (-not $usersByRole.ContainsKey($roleName)) {
+                        $usersByRole[$roleName] = @()
+                    }
+                    if (-not $teamsByRole.ContainsKey($roleName)) {
+                        $teamsByRole[$roleName] = @()
+                    }
                     
-                    if ($users -is [System.Collections.IDictionary]) {
-                        foreach ($key in $users.Keys) {
-                            if ($users[$key].fullname) {
-                                $usersList += $users[$key]
+                    # Get users for this specific role
+                    try {
+                        $usersFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
+                        $usersFetch += '<entity name="systemuser">'
+                        $usersFetch += '<attribute name="fullname" />'
+                        $usersFetch += '<attribute name="systemuserid" />'
+                        $usersFetch += '<attribute name="applicationid" />'
+                        $usersFetch += '<link-entity name="systemuserroles" from="systemuserid" to="systemuserid">'
+                        $usersFetch += '<filter>'
+                        $usersFetch += "<condition attribute=`"roleid`" operator=`"eq`" value=`"{$roleId}`" />"
+                        $usersFetch += '</filter>'
+                        $usersFetch += '</link-entity>'
+                        $usersFetch += '<filter>'
+                        $usersFetch += '<condition attribute="isdisabled" operator="eq" value="0" />'
+                        $usersFetch += '</filter>'
+                        $usersFetch += '</entity>'
+                        $usersFetch += '</fetch>'
+                        
+                        $roleUsers = Get-CrmRecordsByFetch -conn $conn -Fetch $usersFetch -ErrorAction SilentlyContinue
+                        
+                        if ($roleUsers -is [System.Collections.IDictionary]) {
+                            foreach ($key in $roleUsers.Keys) {
+                                if ($roleUsers[$key].fullname) {
+                                    $userName = $roleUsers[$key].fullname
+                                    # Mark application users with #
+                                    if ($roleUsers[$key].applicationid -ne $null) {
+                                        $userName = "# $userName"
+                                    }
+                                    $usersByRole[$roleName] += $userName
+                                    # Add to overall users list if not already present
+                                    if ($usersList.fullname -notcontains $roleUsers[$key].fullname) {
+                                        $usersList += $roleUsers[$key]
+                                    }
+                                }
                             }
                         }
+                    } catch {
+                        # Continue with next role
                     }
-                    $totalUsers = $usersList.Count
-                } catch {
-                    $totalUsers = 0
+                    
+                    # Get teams for this specific role
+                    try {
+                        $teamsFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
+                        $teamsFetch += '<entity name="team">'
+                        $teamsFetch += '<attribute name="name" />'
+                        $teamsFetch += '<attribute name="teamid" />'
+                        $teamsFetch += '<link-entity name="teamroles" from="teamid" to="teamid">'
+                        $teamsFetch += '<filter>'
+                        $teamsFetch += "<condition attribute=`"roleid`" operator=`"eq`" value=`"{$roleId}`" />"
+                        $teamsFetch += '</filter>'
+                        $teamsFetch += '</link-entity>'
+                        $teamsFetch += '</entity>'
+                        $teamsFetch += '</fetch>'
+                        
+                        $roleTeams = Get-CrmRecordsByFetch -conn $conn -Fetch $teamsFetch -ErrorAction SilentlyContinue
+                        
+                        if ($roleTeams -is [System.Collections.IDictionary]) {
+                            foreach ($key in $roleTeams.Keys) {
+                                if ($roleTeams[$key].name) {
+                                    $teamsByRole[$roleName] += $roleTeams[$key].name
+                                    # Add to overall teams list if not already present
+                                    if ($teamsList.name -notcontains $roleTeams[$key].name) {
+                                        $teamsList += $roleTeams[$key]
+                                    }
+                                }
+                            }
+                        }
+                    } catch {
+                        # Continue with next role
+                    }
                 }
                 
-                try {
-                    # Get teams assigned to these roles
-                    $teamsFetch = '<fetch version="1.0" output-format="xml-platform" mapping="logical" distinct="true">'
-                    $teamsFetch += '<entity name="team">'
-                    $teamsFetch += '<attribute name="name" />'
-                    $teamsFetch += '<attribute name="teamid" />'
-                    $teamsFetch += '<link-entity name="teamroles" from="teamid" to="teamid">'
-                    $teamsFetch += '<link-entity name="role" from="roleid" to="roleid">'
-                    $teamsFetch += '<link-entity name="appmoduleroles" from="roleid" to="roleid">'
-                    $teamsFetch += '<filter>'
-                    $teamsFetch += "<condition attribute=`"appmoduleid`" operator=`"eq`" value=`"{$appGuid}`" />"
-                    $teamsFetch += '</filter>'
-                    $teamsFetch += '</link-entity>'
-                    $teamsFetch += '</link-entity>'
-                    $teamsFetch += '</link-entity>'
-                    $teamsFetch += '</entity>'
-                    $teamsFetch += '</fetch>'
-                    
-                    $teams = Get-CrmRecordsByFetch -conn $conn -Fetch $teamsFetch -ErrorAction SilentlyContinue
-                    
-                    if ($teams -is [System.Collections.IDictionary]) {
-                        foreach ($key in $teams.Keys) {
-                            if ($teams[$key].name) {
-                                $teamsList += $teams[$key]
-                            }
-                        }
-                    }
-                    $totalTeams = $teamsList.Count
-                } catch {
-                    $totalTeams = 0
-                }
+                $totalUsers = $usersList.Count
+                $totalTeams = $teamsList.Count
             }
             
             # Get last usage information from audit logs
@@ -318,6 +347,26 @@ foreach ($env in $environments) {
             $teamsListStr = if ($teamsList.Count -gt 0) { ($teamsList | ForEach-Object { $_.name }) -join "; " } else { "" }
             $sharedWithRoles = $roleNames
             
+            # Get all unique users from usersByRole for SharedWithUsers
+            $allUniqueUsers = @()
+            foreach ($role in $usersByRole.Keys) {
+                foreach ($user in $usersByRole[$role]) {
+                    if ($allUniqueUsers -notcontains $user) {
+                        $allUniqueUsers += $user
+                    }
+                }
+            }
+            
+            # Get all unique teams from teamsByRole for SharedWithTeams
+            $allUniqueTeams = @()
+            foreach ($role in $teamsByRole.Keys) {
+                foreach ($team in $teamsByRole[$role]) {
+                    if ($allUniqueTeams -notcontains $team) {
+                        $allUniqueTeams += $team
+                    }
+                }
+            }
+            
             $isShared = "No"
             $isOrphaned = "Yes"
             
@@ -342,15 +391,23 @@ foreach ($env in $environments) {
                 CreatedOn = $app.createdon
                 ModifiedOn = $app.modifiedon
                 PublishedOn = $app.publishedon
+                CreatedBy = if ($app.'creator.fullname') { $app.'creator.fullname' } else { "" }
+                ModifiedBy = if ($app.'modifier.fullname') { $app.'modifier.fullname' } else { "" }
                 RoleCount = $roleCount
+                SharedWith = @($rolesList | ForEach-Object { $_.name })
                 SharedWithRoles = $sharedWithRoles
                 SharedCount = $roleCount
                 TotalUsers = $totalUsers
                 TotalTeams = $totalTeams
                 UsersList = $usersListStr
                 TeamsList = $teamsListStr
+                SharedWithUsers = $allUniqueUsers
+                SharedWithTeams = $allUniqueTeams
+                UsersByRole = $usersByRole
+                TeamsByRole = $teamsByRole
                 LastUsed = $lastUsed
                 DaysSinceLastUse = $daysSinceLastUse
+                UsageCount = 0  # Placeholder - would need actual usage tracking
                 IsShared = $isShared
                 IsOrphaned = $isOrphaned
             }
